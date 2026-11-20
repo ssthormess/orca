@@ -1,4 +1,3 @@
-import type { BrowserScreencastResult } from '../../../../shared/browser/runtime/runtime-browser-contracts'
 import { BrowserError } from '../../../browser/browser-error'
 import { randomUUID } from 'node:crypto'
 import { startBrowserScreencast } from '../../../browser/cdp/screencast/browser-screencast-stream'
@@ -19,7 +18,6 @@ import {
   screencastSubscriberIsGhost
 } from './browser-screencast-ghost-subscriber-eviction'
 import type { BrowserScreencastSession } from '../../../browser/cdp/screencast/browser-screencast-stream-types'
-import type { RpcBinarySender } from '../../rpc/transports/rpc-binary-sender'
 import type { RuntimeBrowserCommandHost } from '../commands/browser-command-contracts'
 import type { RuntimeBrowserCommandTargets } from '../commands/browser-command-targets'
 import type { RuntimeBrowserTabCatalog } from '../tabs/browser-tab-catalog'
@@ -32,6 +30,7 @@ import {
 import type {
   BrowserScreencastParams,
   BrowserScreencastStartResult,
+  BrowserScreencastStream,
   ActiveBrowserScreencastSubscriber,
   ActiveBrowserScreencastPage
 } from './browser-screencast-contracts'
@@ -53,11 +52,7 @@ export class RuntimeBrowserScreencasts {
 
   async browserScreencast(
     params: BrowserScreencastParams,
-    stream: {
-      sendBinary: RpcBinarySender
-      emit?: (event: BrowserScreencastResult) => void
-      pairedDeviceId?: string
-    }
+    stream: BrowserScreencastStream
   ): Promise<BrowserScreencastStartResult> {
     if (await this.catalog.resolveClientHostedBrowserPage(params)) {
       throw new BrowserError(

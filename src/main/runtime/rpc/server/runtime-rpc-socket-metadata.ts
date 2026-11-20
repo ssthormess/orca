@@ -66,12 +66,18 @@ export function createRuntimeTransportMetadata(
     return {
       kind: 'named-pipe',
       // Named pipes lack Unix chmod; use per-runtime suffixes to avoid stable, guessable endpoints.
-      endpoint: `\\\\.\\pipe\\orca-${pid}-${endpointSuffix}`
+      endpoint: `\\\\.\\pipe\\orca-${pid}-${endpointSuffix}`,
+      streaming: true
     }
   }
   return {
     kind: 'unix',
     // Long userData paths overflow sun_path (EINVAL); relocate like the daemon socket.
-    endpoint: resolveDaemonUnixSocketPath(userDataPath, `o-${pid}-${endpointSuffix}.sock`, platform)
+    endpoint: resolveDaemonUnixSocketPath(
+      userDataPath,
+      `o-${pid}-${endpointSuffix}.sock`,
+      platform
+    ),
+    streaming: true
   }
 }

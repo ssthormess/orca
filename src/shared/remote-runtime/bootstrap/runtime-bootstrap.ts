@@ -4,10 +4,14 @@ export type RuntimeTransportMetadata =
   | {
       kind: 'unix'
       endpoint: string
+      /** Serves streaming RPC methods plus base64-tagged binary frames; absent means request/reply only. */
+      streaming?: boolean
     }
   | {
       kind: 'named-pipe'
       endpoint: string
+      /** Serves streaming RPC methods plus base64-tagged binary frames; absent means request/reply only. */
+      streaming?: boolean
     }
   | {
       kind: 'websocket'

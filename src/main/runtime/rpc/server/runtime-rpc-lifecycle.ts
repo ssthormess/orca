@@ -85,11 +85,8 @@ export class RuntimeRpcLifecycle extends RuntimeRpcWebSocketDispatch {
 
     // Always reply on unexpected throws so clients and dispatch controllers cannot be stranded.
     socketTransport.onMessage((msg, reply, context) => {
-      void this.trackClientRequest(() => this.handleMessage(msg, context))
-        .then((response) => {
-          reply(JSON.stringify(response))
-        })
-        .catch((error) => {
+      void this.trackClientRequest(() => this.handleStreamingMessage(msg, reply, context)).catch(
+        (error) => {
           const message = errorMessage(error)
           // Recover request id best-effort so clients can correlate failure.
           let id = 'unknown'
@@ -100,7 +97,8 @@ export class RuntimeRpcLifecycle extends RuntimeRpcWebSocketDispatch {
             }
           } catch {}
           reply(JSON.stringify(this.buildError(id, 'internal_error', message)))
-        })
+        }
+      )
     })
 
     await socketTransport.start()

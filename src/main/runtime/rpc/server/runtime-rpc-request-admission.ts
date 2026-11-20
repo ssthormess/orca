@@ -2,7 +2,7 @@ import type { RuntimeMetadata } from '../../../../shared/remote-runtime/bootstra
 import { writeRuntimeMetadata } from './runtime-metadata'
 import type { RpcMessageContext } from '../transport'
 import type { PairingOffersRpcContext, RpcRequest, RpcResponse } from '../core'
-import { errorResponse } from '../responses/rpc-response'
+import { errorResponse, successResponse } from '../responses/rpc-response'
 import { RuntimeRpcBinaryRouting } from './runtime-rpc-binary-routing'
 import { classifyRuntimeLongPoll, type RuntimeLongPollClass } from './runtime-rpc-long-poll'
 import { OWNER_RPC_CALLER_SCOPE, type RpcCallerScope } from '../callers/rpc-caller-scope'
@@ -59,6 +59,82 @@ export class RuntimeRpcRequestAdmission extends RuntimeRpcBinaryRouting {
     } finally {
       this.releaseLongPoll(longPoll)
     }
+  }
+
+  // Streaming-capable variant of handleMessage: one request yields many tagged replies
+  // plus base64 binary frames (browser.screencast); unary methods keep a single reply.
+  protected async handleStreamingMessage(
+    rawMessage: string,
+    reply: (
+      response: string,
+      options?: { dropWhenBacklogged?: boolean }
+    ) => boolean | 'backlogged' | void,
+    context?: RpcMessageContext
+  ): Promise<void> {
+    // Oversized clients arrive as empty messages before transport closes them.
+    if (!rawMessage) {
+      reply(
+        JSON.stringify(
+          this.buildError('unknown', 'request_too_large', 'RPC request exceeds the maximum size')
+        )
+      )
+      return
+    }
+    const parsed = this.parseAndAuth(rawMessage)
+    if ('error' in parsed) {
+      reply(JSON.stringify(parsed.error))
+      return
+    }
+    const { request, callerScope } = parsed
+
+    const longPoll = classifyRuntimeLongPoll(request)
+    const rejection = this.admitLongPoll(longPoll)
+    if (rejection) {
+      reply(JSON.stringify(this.buildError(request.id, 'runtime_busy', rejection)))
+      return
+    }
+    const streams = this.dispatcher.methodIsStreaming(request.method)
+    // Streams can idle arbitrarily long on a quiet page; keepalives let clients tell a
+    // live idle stream from a dead socket.
+    if (longPoll || streams) {
+      context?.startKeepalive()
+    }
+    try {
+      await this.dispatcher.dispatchStreaming(request, reply, {
+        signal:
+          streams ||
+          longPoll ||
+          request.method.startsWith('linear.') ||
+          DISCONNECT_FORWARDED_METHODS.has(request.method)
+            ? context?.signal
+            : undefined,
+        connectionSignal: context?.signal,
+        // Connection-scoped stream replacement must not collapse same-socket siblings.
+        connectionId: `local-rpc:${request.id}`,
+        caller: LOCAL_CLI_RPC_CALLER,
+        callerScope,
+        pairingOffers: callerScope.kind === 'owner' ? this.ownerPairingOffers() : undefined,
+        sendBinary: (bytes, sendOptions) => {
+          const written = reply(
+            JSON.stringify({
+              id: request.id,
+              ok: true,
+              streaming: true,
+              binary: Buffer.from(bytes).toString('base64')
+            }),
+            { dropWhenBacklogged: sendOptions?.dropWhenBacklogged }
+          )
+          return written === 'backlogged' ? 'backlogged' : written === false ? false : undefined
+        }
+      })
+    } finally {
+      this.releaseLongPoll(longPoll)
+    }
+    // A resolved streaming handler has emitted its last event; a terminal unary-shaped
+    // reply lets transports release the dispatch while the socket stays reusable.
+    reply(
+      JSON.stringify(successResponse(request.id, { runtimeId: this.runtime.getRuntimeId() }, null))
+    )
   }
 
   // Pairing lives above this class in the server chain; RuntimeRpcMobilePairing provides it.

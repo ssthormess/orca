@@ -33,6 +33,12 @@ export type BrowserScreencastStartResult = {
   flushPendingFrame: () => void
 }
 
+export type BrowserScreencastStream = {
+  sendBinary: RpcBinarySender
+  emit?: (event: BrowserScreencastResult) => void
+  pairedDeviceId?: string
+}
+
 export type ActiveBrowserScreencastSubscriber = {
   sendBinary: RpcBinarySender
   emit?: (event: BrowserScreencastResult) => void

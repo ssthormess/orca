@@ -102,16 +102,19 @@ export class RpcDispatcher {
     }
   }
 
+  /** Lets transports pick per-request lifecycle before admission (abort-on-close for streams only). */
+  methodIsStreaming(methodName: string): boolean {
+    const method = this.registry.get(methodName)
+    return method !== undefined && isStreamingMethod(method)
+  }
+
   async dispatchStreaming(
     rawRequest: RpcRequest,
     reply: (response: string) => void,
     options?: RpcDispatchStreamingOptions
   ): Promise<void> {
-    return this.dispatchStreamingObjects(
-      rawRequest,
-      (response) => reply(JSON.stringify(response)),
-      options
-    )
+    const adapt = (response: RpcResponse): void => reply(JSON.stringify(response))
+    return this.dispatchStreamingObjects(rawRequest, adapt, options)
   }
 
   // Transport callbacks must clone or encode synchronously before runtime-owned values change.

@@ -899,10 +899,12 @@
 1 src/main/orcad/artifact-slots/orcad-artifact-materializer.ts
 3 src/main/orcad/artifact-slots/orcad-daemon-slot-pins.ts
 3 src/main/orcad/browser-providers/electron/electron-serve-browser-process.ts
+2 src/main/orcad/browser-providers/electron/electron-serve-browser-screencast.ts # same one-shot trusted-dir check the sidecar client rows carry; charged once per sidecar RPC connect
 1 src/main/orcad/browser-providers/electron/electron-sidecar-profile.ts
 3 src/main/orcad/browser-providers/orcad-browser-provider.ts
 1 src/main/orcad/browser-providers/orcad-browser-startup.ts
 1 src/main/orcad/browser-providers/orcad-sidecar-runtime-client.ts
+1 src/main/orcad/browser-providers/orcad-sidecar-stream-client.ts # daemonSocketDirIsTrusted runs once per stream connect; the socket then streams asynchronously
 7 src/main/orcad/credentials/orcad-plaintext-credential-migration.ts
 7 src/main/orcad/credentials/orcad-secret-key-record.ts
 10 src/main/orcad/credentials/orcad-secret-key-resolution.ts

@@ -18,7 +18,11 @@ export type UnixSocketTransportOptions = {
 
 type MessageHandler = (
   msg: string,
-  reply: (response: string) => void,
+  // Returns socket writability or 'backlogged' when a droppable reply was skipped.
+  reply: (
+    response: string,
+    options?: { dropWhenBacklogged?: boolean }
+  ) => boolean | 'backlogged' | void,
   context?: RpcMessageContext
 ) => void
 
@@ -162,7 +166,7 @@ export class UnixSocketTransport implements RpcTransport {
     inflight: Set<() => void>,
     rearmIdleTimer: () => void
   ): void {
-    let replied = false
+    let finished = false
     let keepaliveTimer: NodeJS.Timeout | null = null
     // Each dispatch owns abort/timer cleanup; socket close runs all without affecting already-completed siblings.
     const abortController = new AbortController()
@@ -186,23 +190,41 @@ export class UnixSocketTransport implements RpcTransport {
     inflight.add(abortDispatch)
     rearmIdleTimer()
 
-    const reply = (response: string): void => {
-      if (replied) {
+    const reply = (
+      response: string,
+      options?: { dropWhenBacklogged?: boolean }
+    ): boolean | 'backlogged' | void => {
+      if (finished) {
         return
       }
-      replied = true
-      cleanupDispatch(false)
-      if (!socket.destroyed && socket.writable) {
-        socket.write(`${response}\n`)
+      // Streaming methods reply many times before settling; each streamed event is
+      // tagged so a terminal unary result or error can still close the dispatch.
+      let streaming = false
+      try {
+        const parsed: { streaming?: unknown } = JSON.parse(response)
+        streaming = parsed.streaming === true
+      } catch {}
+      if (!streaming) {
+        finished = true
+        cleanupDispatch(false)
       }
+      if (socket.destroyed || !socket.writable) {
+        return options?.dropWhenBacklogged ? 'backlogged' : undefined
+      }
+      // WritableLength>0 means earlier bytes still queue: skip droppable frames so the
+      // sender holds and retries the newest instead of double-sending a stale one.
+      if (options?.dropWhenBacklogged && socket.writableLength > 0) {
+        return 'backlogged'
+      }
+      return socket.write(`${response}\n`)
     }
 
     const startKeepalive = (): void => {
-      if (keepaliveTimer || replied) {
+      if (keepaliveTimer || finished) {
         return
       }
       keepaliveTimer = setInterval(() => {
-        if (replied || socket.destroyed || !socket.writable) {
+        if (finished || socket.destroyed || !socket.writable) {
           cleanupDispatch(socket.destroyed || !socket.writable)
           return
         }

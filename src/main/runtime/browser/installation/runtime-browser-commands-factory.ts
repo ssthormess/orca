@@ -28,6 +28,8 @@ export type RuntimeBrowserCommandsFactoryOptions = {
     reload(params: BrowserExtensionReloadParams): Promise<BrowserExtensionReloadResult>
   }
   supportsGoogleCookieClear?: () => boolean
+  /** The provider streams rendered pages itself (e.g. a sidecar runtime over a streaming transport). */
+  supportsScreencast?: () => boolean
   /** Client pages live in this runtime's own registries, so they need no healthy engine. */
   clientHostingWithoutEngine?: boolean
   /** The provider owns browser pages without a renderer window. */
@@ -72,6 +74,12 @@ export function runtimeBrowserCommandsFactorySupportsGoogleCookieClear(): boolea
   return (
     runtimeBrowserCommandsFactoryIsAvailable() &&
     currentOptions.supportsGoogleCookieClear?.() === true
+  )
+}
+
+export function runtimeBrowserCommandsFactorySupportsScreencast(): boolean {
+  return (
+    runtimeBrowserCommandsFactoryIsAvailable() && currentOptions.supportsScreencast?.() === true
   )
 }
 

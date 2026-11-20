@@ -174,7 +174,7 @@ export class ElectronSidecarTabRegistry {
     return worktreeId ? undefined : this.register(tab.browserPageId, undefined, undefined)
   }
 
-  rewriteResult(result: unknown): unknown {
+  rewriteResult<T>(result: T): T {
     const parsed = ElectronSidecarResult.safeParse(result)
     if (!parsed.success) {
       return result
@@ -189,7 +189,8 @@ export class ElectronSidecarTabRegistry {
     if (rewritten.tab) {
       rewritten.tab = this.rewriteTab(rewritten.tab)
     }
-    return rewritten
+    // oxlint-disable-next-line typescript/consistent-type-assertions -- SAFETY: the schema is passthrough, so a parsed value keeps T's shape; only page-id strings are swapped.
+    return rewritten as T
   }
 
   private rewriteTab(tab: ElectronSidecarTab): ElectronSidecarTab {

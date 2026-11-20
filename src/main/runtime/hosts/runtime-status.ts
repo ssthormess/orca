@@ -14,6 +14,7 @@ import {
   runtimeBrowserCommandsFactoryIsHeadless,
   runtimeBrowserCommandsFactorySupportsGoogleCookieClear,
   runtimeBrowserCommandsFactorySupportsClientHosting,
+  runtimeBrowserCommandsFactorySupportsScreencast,
   runtimeBrowserUnavailableCause
 } from '../browser/installation/runtime-browser-commands-factory'
 import { isBrowserIdentityModeStoreInitialized } from '../../browser/identity/mode/browser-identity-mode-store'
@@ -73,6 +74,8 @@ export abstract class OrcaRuntimeWithGetStatus extends RuntimeWorkspaceChangeEve
     const hasOffscreen = !hasRenderer && Boolean(this.offscreenBrowserBackend)
     const hasHeadlessCommands = runtimeBrowserCommandsFactoryIsHeadless()
     const canBrowse = hasRenderer || hasOffscreen
+    // A provider-hosted stream (sidecar runtime) serves remote viewers without a local surface.
+    const canScreencast = canBrowse || runtimeBrowserCommandsFactorySupportsScreencast()
     const canHostClientPages = runtimeBrowserCommandsFactorySupportsClientHosting()
     // TEMPORARY compatibility field: older clients otherwise re-probe WSL capabilities indefinitely.
     const windowsProcessStartTimeAvailable =
@@ -81,7 +84,7 @@ export abstract class OrcaRuntimeWithGetStatus extends RuntimeWorkspaceChangeEve
       (capability) =>
         (capability !== BROWSER_GOOGLE_COOKIE_CLEAR_CAPABILITY ||
           runtimeBrowserCommandsFactorySupportsGoogleCookieClear()) &&
-        (capability !== 'browser.screencast.v1' || canBrowse) &&
+        (capability !== 'browser.screencast.v1' || canScreencast) &&
         (capability !== BROWSER_CLIENT_HOST_RUNTIME_CAPABILITY || canHostClientPages) &&
         (capability !== BROWSER_TAB_CREATE_KNOWN_ID_RUNTIME_CAPABILITY ||
           canBrowse ||

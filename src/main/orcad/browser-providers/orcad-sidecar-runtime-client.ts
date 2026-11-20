@@ -10,7 +10,7 @@ import { BrowserError } from '../../browser/browser-error'
 import { daemonSocketDirIsTrusted } from '../../daemon/endpoint/publication/daemon-socket-endpoint-path'
 const SIDECAR_MAX_RESPONSE_BYTES = 64 * 1024 * 1024
 
-const RuntimeResponse = z.discriminatedUnion('ok', [
+export const RuntimeResponse = z.discriminatedUnion('ok', [
   z.object({ id: z.string(), ok: z.literal(true), result: z.unknown() }).passthrough(),
   z
     .object({

@@ -22,6 +22,8 @@ export type OrcadBrowserProvider = {
   factory: RuntimeBrowserCommandsFactory
   isAvailable(): boolean
   supportsGoogleCookieClear?(): boolean
+  /** True when the provider can stream rendered pages to remote viewers. */
+  supportsScreencast?(): boolean
   stop(): Promise<void>
 }
 
@@ -182,6 +184,7 @@ async function startElectronServeProvider(
   return {
     kind: 'electron',
     supportsGoogleCookieClear: () => processHandle.supportsGoogleCookieClear(),
+    supportsScreencast: () => processHandle.supportsScreencast(),
     factory: (host) => processHandle.createCommands(host),
     isAvailable: () => processHandle.isAvailable(),
     stop: async () => {

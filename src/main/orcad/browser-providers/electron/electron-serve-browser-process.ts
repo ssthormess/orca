@@ -1,6 +1,7 @@
 import {
   BROWSER_EXPECT_URL_RUNTIME_CAPABILITY,
-  BROWSER_GOOGLE_COOKIE_CLEAR_CAPABILITY
+  BROWSER_GOOGLE_COOKIE_CLEAR_CAPABILITY,
+  BROWSER_SCREENCAST_RUNTIME_CAPABILITY
 } from '../../../../shared/browser/runtime/browser-runtime-capabilities'
 import {
   BROWSER_EXPECT_URL_UNSUPPORTED_CODE,
@@ -12,7 +13,10 @@ import { z } from 'zod'
 import { BrowserError } from '../../../browser/browser-error'
 import type { RuntimeBrowserCommandHost } from '../../../runtime/browser/commands/browser-command-contracts'
 import type { RuntimeBrowserCommands } from '../../../runtime/browser/commands/browser-commands'
-import type { RuntimeMetadata } from '../../../../shared/remote-runtime/bootstrap/runtime-bootstrap'
+import {
+  findTransport,
+  type RuntimeMetadata
+} from '../../../../shared/remote-runtime/bootstrap/runtime-bootstrap'
 import { BROWSER_UNAVAILABLE_ERROR_CODE } from '../../../../shared/remote-runtime/session-graph/runtime-session-contracts'
 import { readRuntimeMetadata } from '../../../runtime/rpc/server/runtime-metadata'
 import { spawnProcess } from '@orca/process-host'
@@ -22,6 +26,8 @@ import { BROWSER_SIDECAR_OWNER_ENV } from '../../../../shared/browser/runtime/br
 import { electronIsolatedProfileSwitches } from '../../../../shared/app-lifecycle/launch/electron-isolated-profile-switches'
 import { headlessServeOzonePlatformSwitches } from '../../../../shared/app-lifecycle/launch/headless-serve-ozone-platform'
 import { sendOrcadSidecarRequest } from '../orcad-sidecar-runtime-client'
+import { electronServeBrowserScreencast } from './electron-serve-browser-screencast'
+import type { BrowserScreencastStream } from '../../../runtime/browser/screencast/browser-screencast-contracts'
 import { browserWaitRequestTimeoutMs } from '../../../../shared/browser/automation/browser-wait-timeout'
 import { electronServeEnvironment } from './electron-serve-browser-environment'
 import { reserveLoopbackPort } from './loopback-port-reservation'
@@ -31,20 +37,11 @@ import {
   stopElectronSidecar,
   type ElectronSidecarProfile
 } from './electron-sidecar-profile'
-import {
-  ElectronSidecarTabRegistry,
-  ElectronSidecarTabSchema,
-  type ElectronSidecarPage
-} from './electron-sidecar-tab-registry'
-import {
-  electronSidecarRuntimeMethodName,
-  TARGETLESS_BROWSER_METHODS
-} from './electron-sidecar-method-routing'
+import { ElectronSidecarTabRegistry } from './electron-sidecar-tab-registry'
+import { resolveSidecarCommandTarget } from './electron-sidecar-command-target'
+import { rewriteSidecarCommandResult } from './electron-sidecar-command-result'
 
 const START_TIMEOUT_MS = 120_000
-const BrowserPageResult = z.object({ browserPageId: z.string() }).passthrough()
-const BrowserCloseResult = z.object({ closed: z.boolean() }).passthrough()
-const BrowserTabListResult = z.object({ tabs: z.array(ElectronSidecarTabSchema) }).passthrough()
 const RuntimeStatusResult = z.object({ capabilities: z.array(z.string()).optional() }).passthrough()
 
 export class ElectronServeBrowserProcess {
@@ -157,6 +154,20 @@ export class ElectronServeBrowserProcess {
     )
   }
 
+  supportsScreencast(): boolean {
+    if (!this.isAvailable()) {
+      return false
+    }
+    const transport = this.metadata && findTransport(this.metadata, 'unix', 'named-pipe')
+    const transportStreams =
+      transport !== null && (transport.kind === 'unix' || transport.kind === 'named-pipe')
+        ? transport.streaming === true
+        : false
+    return (
+      this.sidecarCapabilities.includes(BROWSER_SCREENCAST_RUNTIME_CAPABILITY) && transportStreams
+    )
+  }
+
   isAvailable(): boolean {
     return this.metadata !== null && isProcessAlive(this.metadata.pid)
   }
@@ -194,12 +205,6 @@ export class ElectronServeBrowserProcess {
     method: string,
     args: unknown[]
   ): Promise<unknown> {
-    if (method === 'browserScreencast') {
-      throw new BrowserError(
-        'browser_screencast_unavailable',
-        'The orcad Electron provider does not proxy screencast.'
-      )
-    }
     const metadata = this.metadata
     if (!metadata) {
       throw new BrowserError(
@@ -218,47 +223,31 @@ export class ElectronServeBrowserProcess {
         'The installed Orca app that runs this server’s browser cannot check --expect-url. Update it or drop the flag.'
       )
     }
-    const worktreeId =
-      typeof original.worktree === 'string'
-        ? (await host.resolveBrowserWorkspace(original.worktree)).id
-        : undefined
-    const params: Record<string, unknown> = { ...original, worktree: undefined }
-    const requestedPageId = typeof original.page === 'string' ? original.page : undefined
-    const requestedIndex = typeof original.index === 'number' ? original.index : undefined
-    let targetPage: ElectronSidecarPage | undefined
-    let rpcMethod = electronSidecarRuntimeMethodName(method)
-    if (method === 'browserTabCreate' && requestedPageId) {
-      const existing = this.tabs.find(requestedPageId)
-      if (existing) {
-        this.tabs.require(requestedPageId, worktreeId)
-        return { browserPageId: requestedPageId }
-      }
-      // Sidecars mint their own IDs; adopt the caller’s provisional ID after creation.
-      delete params.page
+    const prepared = await resolveSidecarCommandTarget(this.tabs, host, method, original)
+    if (prepared.earlyResult !== undefined) {
+      return prepared.earlyResult
     }
+    const { rpcMethod, params, targetPage, worktreeId, requestedPageId, requestedIndex } = prepared
 
-    if (method === 'browserTabCurrent' && worktreeId) {
-      targetPage = this.tabs.active(worktreeId)
-      rpcMethod = 'browser.tabShow'
-      params.page = targetPage.sidecarPageId
-    } else if (method === 'browserTabSwitch' || method === 'browserTabClose') {
-      targetPage = requestedPageId
-        ? this.tabs.require(requestedPageId, worktreeId)
-        : requestedIndex !== undefined
-          ? this.tabs.pageAt(worktreeId, requestedIndex)
-          : worktreeId
-            ? this.tabs.active(worktreeId)
-            : undefined
-      if (targetPage) {
-        params.page = targetPage.sidecarPageId
-        delete params.index
+    if (method === 'browserScreencast') {
+      try {
+        return await electronServeBrowserScreencast(
+          metadata,
+          this.tabs,
+          params,
+          // oxlint-disable-next-line typescript/consistent-type-assertions -- SAFETY: command args arrive untyped through the Proxy dispatch; callers pass the BrowserScreencastStream contract.
+          (args[1] ?? {}) as BrowserScreencastStream
+        )
+      } catch (error) {
+        if (
+          targetPage &&
+          error instanceof BrowserError &&
+          (error.code === 'browser_tab_not_found' || error.code === 'browser_tab_closed')
+        ) {
+          this.tabs.delete(targetPage)
+        }
+        throw error
       }
-    } else if (requestedPageId && method !== 'browserTabCreate') {
-      targetPage = this.tabs.require(requestedPageId, worktreeId)
-      params.page = targetPage.sidecarPageId
-    } else if (worktreeId && !TARGETLESS_BROWSER_METHODS[method]) {
-      targetPage = this.tabs.active(worktreeId)
-      params.page = targetPage.sidecarPageId
     }
 
     let result: unknown
@@ -284,38 +273,11 @@ export class ElectronServeBrowserProcess {
           : null
       throw mismatch?.success ? browserExpectedUrlMismatchError(mismatch.data) : error
     }
-    if (method === 'browserTabCreate') {
-      const created = BrowserPageResult.parse(result)
-      const page = this.tabs.register(created.browserPageId, requestedPageId, worktreeId)
-      return { ...created, browserPageId: page.publicPageId }
-    }
-    if (method === 'browserTabList') {
-      const listed = BrowserTabListResult.parse(result)
-      return { ...listed, tabs: this.tabs.reconcileTabs(listed.tabs, worktreeId) }
-    }
-    if (method === 'browserTabSwitch') {
-      const switched = BrowserPageResult.parse(result)
-      const page = this.tabs.pageForSidecar(switched.browserPageId)
-      if (page) {
-        this.tabs.setActive(page)
-      }
-      return {
-        ...switched,
-        ...(requestedIndex !== undefined ? { switched: requestedIndex } : {}),
-        browserPageId: this.tabs.publicPageId(switched.browserPageId)
-      }
-    }
-    if (method === 'browserTabClose' && targetPage) {
-      const closed = BrowserCloseResult.parse(result)
-      if (closed.closed) {
-        this.tabs.delete(targetPage)
-      }
-      return closed
-    }
-    if (method === 'browserTabProfileClone') {
-      const cloned = BrowserPageResult.parse(result)
-      this.tabs.register(cloned.browserPageId, undefined, targetPage?.worktreeId)
-    }
-    return this.tabs.rewriteResult(result)
+    return rewriteSidecarCommandResult(this.tabs, method, result, {
+      requestedPageId,
+      requestedIndex,
+      worktreeId,
+      targetPage
+    })
   }
 }
